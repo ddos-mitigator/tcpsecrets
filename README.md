@@ -1,20 +1,24 @@
 # tcpsecrets
-Linux kernel module to provide access to tcp cookie secrets via /proc/tcp_secrets
 
-## Tested kernels
-- 4.2.0-35-generic #40~14.04.1-Ubuntu 
-- 4.4.0-34-generic #53~14.04.1-Ubuntu 
-- 4.6.0-0.bpo.1-amd64 #1 SMP Debian 4.6.4-1~bpo8+1
-- 4.9.0-0.bpo.3-amd64 #1 SMP Debian 4.9.25-1~bpo8+1
-- 4.9.0-3-amd64 #1 SMP Debian 4.9.30-2+deb9u3
+Linux kernel module to provide access to TCP SYN cookie secrets
+via `/proc/tcp_secrets`.
 
-## Untested kernels
-- 3.16.0-4-amd64 #1 SMP Debian 3.16.36-1+deb8u1 (builds, not tested)
+## Kernel Support
 
-## Unsupported kernels
-- 2.6.x 
+### Tested kernels
 
-## Custom kernels
+* 4.19.0-12-amd64 (Debian 10.6)
+
+### Untested kernels
+
+* ≥ 4.13 (should theoretically work)
+
+### Unsupported kernels
+
+* < 4.13 (cookie algorithm changed)
+
+### Custom kernels
+
 These options are required for module to work:
 
 ```
@@ -24,6 +28,7 @@ CONFIG_DYNAMIC_FTRACE=y
 CONFIG_DYNAMIC_FTRACE_WITH_REGS=y
 CONFIG_FTRACE_MCOUNT_RECORD=y
 ```
+
 
 ## Install via DKMS
 
