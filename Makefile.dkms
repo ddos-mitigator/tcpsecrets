@@ -14,7 +14,7 @@ build: install_sources
 
 install_sources:
 	install -o root -g root -m 0755 -d $(DKMS_DSTDIR)
-	cp -t $(DKMS_DSTDIR)/ Makefile tcpsecrets.c
+	cp -t $(DKMS_DSTDIR)/ Makefile tcpsecrets.c kallsyms.h
 	sed "s/PACKAGE_VERSION=/PACKAGE_VERSION=$(COMMIT_REV)/" dkms.conf > "$(DKMS_DSTDIR)/dkms.conf"
 
 clean:

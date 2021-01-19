@@ -10,6 +10,8 @@
 #include <net/net_namespace.h>
 #include <net/secure_seq.h>
 
+#include "kallsyms.h"
+
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 13, 0)
 #error "Kernel 4.13.0+ is required."
 #endif
@@ -81,92 +83,42 @@ static const struct proc_ops tcp_secrets_fops = {
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 7, 0)
 
-static unsigned long parse_kallsyms_line(const char *begin, const char *end)
+struct file_ctx {
+	struct file *file;
+	loff_t off;
+};
+
+static ssize_t read_file(file_type file, void *buffer, size_t size)
 {
-	static const int NAME_OFFSET = 16 + 1 + 1 + 1;
-
-	const char *name;
-	unsigned long addr;
-
-	if ((end - begin) <= NAME_OFFSET)
-		return 0;
-
-	name = begin + NAME_OFFSET;
-	if (strncmp(name, "kallsyms_on_each_symbol", end - name))
-		return 0;
-
-	sscanf(begin, "%016lx", &addr);
-	return addr;
-}
-
-static unsigned long parse_kallsyms_file(struct file *f)
-{
-	char buffer[1024] = {0};       /* current input chunk */
-	char leftover[128] = {0};      /* unterminated line from previous chunk */
-	char *leftover_end = leftover; /* place to put line continuation */
-	loff_t off = 0;
-	ssize_t ret;
-	unsigned long addr = 0;
-
-	while ((ret = kernel_read(f, buffer, sizeof(buffer), &off)) > 0) {
-		char *begin = buffer;
-		char *end = strnchr(buffer, ret, '\n');
-		if (!end) {
-			printk(LOG_PREFIX "line too long in /proc/kallsyms\n");
-			return 0;
-		}
-
-		if (leftover != leftover_end) {
-			/* check if second piece of line fits in leftover */
-			size_t size = end - buffer;
-			if ((leftover_end + size) >= (leftover + sizeof(leftover))) {
-				printk(LOG_PREFIX "line too long in /proc/kallsyms\n");
-				return 0;
-			}
-
-			strncpy(leftover_end, buffer, size);
-			leftover_end += end - buffer;
-			if ((addr = parse_kallsyms_line(leftover, leftover_end)))
-				return addr;
-
-			/* clear leftover and move to next line */
-			leftover_end = leftover;
-			begin = end + 1;
-		}
-
-		while ((end = strnchr(begin, buffer + ret - begin, '\n'))) {
-			if ((addr = parse_kallsyms_line(begin, end)))
-				return addr;
-			begin = end + 1;
-		}
-
-		/* stash last line if it's not terminated */
-		if (begin < (buffer + ret)) {
-			size_t size = buffer + ret - begin;
-			strncpy(leftover, begin, size);
-			leftover_end = leftover + size;
-		}
-	}
-
-	if (ret < 0)
-		printk(LOG_PREFIX "error reading /proc/kallsyms\n");
-	return addr;
+	struct file_ctx *ctx = (struct file_ctx *)file;
+	return kernel_read(ctx->file, buffer, size, &ctx->off);
 }
 
 static kallsyms_on_each_symbol_type find_kallsyms_on_each_symbol(void)
 {
-	struct file *f;
-	kallsyms_on_each_symbol_type ret;
+	struct file_ctx ctx;
+	kallsyms_on_each_symbol_type addr;
+	int ret;
 
-	f = filp_open("/proc/kallsyms", O_RDONLY, 0);
-	if (f == NULL) {
+	ctx.file = filp_open("/proc/kallsyms", O_RDONLY, 0);
+	ctx.off = 0;
+	if (ctx.file == NULL) {
 		printk(LOG_PREFIX "can't open /proc/kallsyms\n");
 		return NULL;
 	}
 
-	ret = (kallsyms_on_each_symbol_type)parse_kallsyms_file(f);
-	filp_close(f, current->files);
-	return ret;
+	ret = parse_kallsyms_file(&ctx, read_file, (unsigned long *)&addr);
+	switch (ret) {
+	case PARSE_ERR_LINETOOLONG:
+		printk(LOG_PREFIX "line too long in /proc/kallsyms\n");
+		break;
+	case PARSE_ERR_READ:
+		printk(LOG_PREFIX "error reading /proc/kallsyms\n");
+		break;
+	}
+
+	filp_close(ctx.file, current->files);
+	return addr;
 }
 
 #else /* kernel < 5.7 */

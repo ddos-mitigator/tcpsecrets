@@ -31,3 +31,10 @@ CONFIG_FTRACE_MCOUNT_RECORD=y
 ## Install via DKMS
 
     KERNEL_VERSION=$(uname -r) make -f Makefile.dkms
+
+
+## Run Tests
+
+```
+make test
+```
