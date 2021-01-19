@@ -287,4 +287,4 @@ MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Alexander Polyakov <apolyakov@beget.ru>");
 MODULE_AUTHOR("Dmitry Kozlyuk <kozlyuk@bifit.com>");
 MODULE_DESCRIPTION("Provide access to TCP SYN cookie secrets via /proc/" PROC_ENTRY);
-MODULE_VERSION("2.0");
+MODULE_VERSION("2.1");
