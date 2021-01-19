@@ -10,7 +10,10 @@
 #include <net/net_namespace.h>
 #include <net/secure_seq.h>
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 7, 0)
 #include "kallsyms.h"
+#define KALLSYMS_UNEXPORTED
+#endif
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 13, 0)
 #error "Kernel 4.13.0+ is required."
@@ -81,7 +84,7 @@ static const struct proc_ops tcp_secrets_fops = {
 };
 #endif
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 7, 0)
+#ifdef KALLSYMS_UNEXPORTED
 
 struct file_ctx {
 	struct file *file;
@@ -121,7 +124,7 @@ static kallsyms_on_each_symbol_type find_kallsyms_on_each_symbol(void)
 	return addr;
 }
 
-#else /* kernel < 5.7 */
+#else /* kallsyms_on_each_symbol() is exported */
 
 static kallsyms_on_each_symbol_type find_kallsyms_on_each_symbol(void)
 {
