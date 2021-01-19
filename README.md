@@ -8,10 +8,8 @@ via `/proc/tcp_secrets`.
 ### Tested kernels
 
 * 4.19.0-12-amd64 (Debian 10.6)
-
-### Untested kernels
-
-* ≥ 4.13 (should theoretically work)
+* 5.7.0-0.bpo.2-amd64 (Debian backports)
+* 5.9.0-0.bpo.5-amd64 (ditto)
 
 ### Unsupported kernels
 

@@ -14,7 +14,12 @@
 #error "Kernel 4.13.0+ is required."
 #endif
 
+#define LOG_PREFIX "tcpsecrets: "
 #define PROC_ENTRY "tcp_secrets"
+
+typedef int (*kallsyms_on_each_symbol_type)(
+	int (*fn)(void *, const char *, struct module *, unsigned long),
+	void *data);
 
 static void *cookie_v4_check_ptr;
 
@@ -25,7 +30,7 @@ static siphash_key_t *timestamp_secret_ptr = NULL;
 static struct proc_dir_entry *proc_entry;
 
 static void show_bytes(struct seq_file *m, const char *name,
-		       const void *in, size_t size)
+			   const void *in, size_t size)
 {
 	size_t i;
 
@@ -58,12 +63,120 @@ static int tcp_secrets_open(struct inode *inode, struct file *file)
 	return single_open(file, tcp_secrets_show, NULL);
 }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 4, 0)
 static const struct file_operations tcp_secrets_fops = {
 	.open		= tcp_secrets_open,
 	.read		= seq_read,
 	.llseek		= seq_lseek,
 	.release	= single_release,
 };
+#else
+static const struct proc_ops tcp_secrets_fops = {
+	.proc_open	= tcp_secrets_open,
+	.proc_read	= seq_read,
+	.proc_lseek	= seq_lseek,
+	.proc_release	= single_release,
+};
+#endif
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 7, 0)
+
+static unsigned long parse_kallsyms_line(const char *begin, const char *end)
+{
+	static const int NAME_OFFSET = 16 + 1 + 1 + 1;
+
+	const char *name;
+	unsigned long addr;
+
+	if ((end - begin) <= NAME_OFFSET)
+		return 0;
+
+	name = begin + NAME_OFFSET;
+	if (strncmp(name, "kallsyms_on_each_symbol", end - name))
+		return 0;
+
+	sscanf(begin, "%016lx", &addr);
+	return addr;
+}
+
+static unsigned long parse_kallsyms_file(struct file *f)
+{
+	char buffer[1024] = {0};       /* current input chunk */
+	char leftover[128] = {0};      /* unterminated line from previous chunk */
+	char *leftover_end = leftover; /* place to put line continuation */
+	loff_t off = 0;
+	ssize_t ret;
+	unsigned long addr = 0;
+
+	while ((ret = kernel_read(f, buffer, sizeof(buffer), &off)) > 0) {
+		char *begin = buffer;
+		char *end = strnchr(buffer, ret, '\n');
+		if (!end) {
+			printk(LOG_PREFIX "line too long in /proc/kallsyms\n");
+			return 0;
+		}
+
+		if (leftover != leftover_end) {
+			/* check if second piece of line fits in leftover */
+			size_t size = end - buffer;
+			if ((leftover_end + size) >= (leftover + sizeof(leftover))) {
+				printk(LOG_PREFIX "line too long in /proc/kallsyms\n");
+				return 0;
+			}
+
+			strncpy(leftover_end, buffer, size);
+			leftover_end += end - buffer;
+			if ((addr = parse_kallsyms_line(leftover, leftover_end)))
+				return addr;
+
+			/* clear leftover and move to next line */
+			leftover_end = leftover;
+			begin = end + 1;
+		}
+
+		while ((end = strnchr(begin, buffer + ret - begin, '\n'))) {
+			if ((addr = parse_kallsyms_line(begin, end)))
+				return addr;
+			begin = end + 1;
+		}
+
+		/* stash last line if it's not terminated */
+		if (begin < (buffer + ret)) {
+			size_t size = buffer + ret - begin;
+			strncpy(leftover, begin, size);
+			leftover_end = leftover + size;
+		}
+	}
+
+	if (ret < 0)
+		printk(LOG_PREFIX "error reading /proc/kallsyms\n");
+	return addr;
+}
+
+static kallsyms_on_each_symbol_type find_kallsyms_on_each_symbol(void)
+{
+	struct file *f;
+	kallsyms_on_each_symbol_type ret;
+
+	f = filp_open("/proc/kallsyms", O_RDONLY, 0);
+	if (f == NULL) {
+		printk(LOG_PREFIX "can't open /proc/kallsyms\n");
+		return NULL;
+	}
+
+	ret = (kallsyms_on_each_symbol_type)parse_kallsyms_file(f);
+	filp_close(f, current->files);
+	return ret;
+}
+
+#else /* kernel < 5.7 */
+
+static kallsyms_on_each_symbol_type find_kallsyms_on_each_symbol(void)
+{
+	return kallsyms_on_each_symbol;
+}
+
+#endif /* kallsyms_on_each_symbol() workaround */
 
 static int symbol_walk_callback(void *data, const char *name,
 				struct module *mod, unsigned long addr)
@@ -87,7 +200,7 @@ static int symbol_walk_callback(void *data, const char *name,
 }
 
 static struct sock *cookie_v4_check_wrapper(struct sock *sk,
-					    struct sk_buff *skb)
+						struct sk_buff *skb)
 {
 	struct sock* (*old_func)(struct sock *sk, struct sk_buff *skb) =
 		(void*)((unsigned long)cookie_v4_check_ptr + MCOUNT_INSN_SIZE);
@@ -100,7 +213,7 @@ static struct sock *cookie_v4_check_wrapper(struct sock *sk,
 
 static void notrace
 tcpsecrets_ftrace_handler(unsigned long ip, unsigned long parent_ip,
-                      struct ftrace_ops *fops, struct pt_regs *regs)
+			  struct ftrace_ops *fops, struct pt_regs *regs)
 {
 	regs->ip = (unsigned long)cookie_v4_check_wrapper;
 }
@@ -116,11 +229,11 @@ static void fix_cookie_v4_check(void)
 
 	ret = ftrace_set_filter_ip(&tcpsecrets_ftrace_ops, (unsigned long)cookie_v4_check_ptr, 0, 0);
 	if (ret)
-		printk("can't set ftrace filter: err=%d\n", ret);
+		printk(LOG_PREFIX "can't set ftrace filter: err=%d\n", ret);
 
 	ret = register_ftrace_function(&tcpsecrets_ftrace_ops);
 	if (ret)
-		printk("can't set ftrace function: err=%d\n", ret);
+		printk(LOG_PREFIX "can't set ftrace function: err=%d\n", ret);
 }
 
 /* Force generation of secrets. */
@@ -145,33 +258,42 @@ static void init_secrets(void)
 
 static int __init tcp_secrets_init(void)
 {
-	int rc = kallsyms_on_each_symbol(symbol_walk_callback, NULL);
+	kallsyms_on_each_symbol_type kallsyms_on_each_symbol_ptr;
+	int rc;
+
+	kallsyms_on_each_symbol_ptr = find_kallsyms_on_each_symbol();
+	if (kallsyms_on_each_symbol_ptr == NULL) {
+		printk(LOG_PREFIX "no access to kallsyms_on_each_symbol()");
+		return -1;
+	}
+
+	rc = kallsyms_on_each_symbol_ptr(symbol_walk_callback, NULL);
 	if (rc)
 		return rc;
 
 	if (cookie_v4_check_ptr) {
 		fix_cookie_v4_check();
 	} else {
-		printk("tcp_secrets: can't find cookie_v4_check function!\n");
+		printk(LOG_PREFIX "can't find cookie_v4_check function!\n");
 		return -1;
 	}
 
 	if (!syncookie_secret_ptr) {
-		printk("tcp_secrets: can't find syncookie secret!\n");
+		printk(LOG_PREFIX "can't find syncookie secret!\n");
 		return -1;
 	}
 	if (!net_secret_ptr) {
-		printk("tcp_secrets: can't find net secret!\n");
+		printk(LOG_PREFIX "can't find net secret!\n");
 		return -1;
 	}
 	if (!timestamp_secret_ptr) {
-		printk("tcp_secrets: can't find timestamp secret!\n");
+		printk(LOG_PREFIX "can't find timestamp secret!\n");
 		return -1;
 	}
 
 	proc_entry = proc_create(PROC_ENTRY, 0, NULL, &tcp_secrets_fops);
 	if (proc_entry == NULL) {
-		printk("tcp_secrets: can't create /proc/" PROC_ENTRY "!\n");
+		printk(LOG_PREFIX "can't create /proc/" PROC_ENTRY "!\n");
 		return -1;
 	}
 
@@ -188,14 +310,14 @@ static void __exit tcp_secrets_exit(void)
 	if (cookie_v4_check_ptr) {
 		ret = unregister_ftrace_function(&tcpsecrets_ftrace_ops);
 		if (ret)
-			printk("can't unregister ftrace\n");
+			printk(LOG_PREFIX "can't unregister ftrace\n");
 
 		ret = ftrace_set_filter_ip(&tcpsecrets_ftrace_ops,
 				(unsigned long)cookie_v4_check_ptr, 1, 0);
 		if (ret)
-			printk("can't unregister filter\n");
+			printk(LOG_PREFIX "can't unregister filter\n");
 
-        	cookie_v4_check_ptr = NULL;
+		cookie_v4_check_ptr = NULL;
 	}
 
 	syncookie_secret_ptr = NULL;
@@ -203,7 +325,7 @@ static void __exit tcp_secrets_exit(void)
 	timestamp_secret_ptr = NULL;
 
 	if (proc_entry) {
-        	remove_proc_entry(PROC_ENTRY, 0);
+		remove_proc_entry(PROC_ENTRY, 0);
 		proc_entry = NULL;
 	}
 }
