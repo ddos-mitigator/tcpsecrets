@@ -26,7 +26,13 @@ typedef int (*kallsyms_on_each_symbol_type)(
 	int (*fn)(void *, const char *, struct module *, unsigned long),
 	void *data);
 
-static void *cookie_v4_check_ptr;
+typedef struct sock * (*cookie_v4_check_type)(
+	struct sock *sk, struct sk_buff *skb);
+typedef u32 (*secure_tcp_seq_type)(
+	__be32 saddr, __be32 daddr, __be16 sport, __be16 dport);
+
+static cookie_v4_check_type cookie_v4_check_ptr;
+static secure_tcp_seq_type secure_tcp_seq_ptr;
 
 static siphash_key_t (*syncookie_secret_ptr)[2] = NULL;
 static siphash_key_t *net_secret_ptr = NULL;
@@ -138,26 +144,23 @@ static int symbol_walk_callback(void *data, const char *name,
 {
 	if (mod)
 		return 0;
-
-	if (strcmp(name, "cookie_v4_check") == 0) {
+	else if (strcmp(name, "cookie_v4_check") == 0)
 		cookie_v4_check_ptr = (void *)addr;
-	}
-	if (strcmp(name, "syncookie_secret") == 0) {
+	else if (strcmp(name, "syncookie_secret") == 0)
 		syncookie_secret_ptr = (void *)addr;
-	}
-	if (strcmp(name, "net_secret") == 0) {
+	else if (strcmp(name, "net_secret") == 0)
 		net_secret_ptr = (void *)addr;
-	}
-	if (strcmp(name, "ts_secret") == 0) {
+	else if (strcmp(name, "ts_secret") == 0)
 		timestamp_secret_ptr = (void *)addr;
-	}
+	else if (strcmp(name, "secure_tcp_seq") == 0)
+		secure_tcp_seq_ptr = (secure_tcp_seq_type)addr;
 	return 0;
 }
 
 static struct sock *cookie_v4_check_wrapper(struct sock *sk,
-						struct sk_buff *skb)
+                                            struct sk_buff *skb)
 {
-	struct sock* (*old_func)(struct sock *sk, struct sk_buff *skb) =
+	cookie_v4_check_type old_func =
 		(void*)((unsigned long)cookie_v4_check_ptr + MCOUNT_INSN_SIZE);
 
 	if (sock_net(sk)->ipv4.sysctl_tcp_syncookies == 2) {
@@ -182,7 +185,8 @@ static void fix_cookie_v4_check(void)
 {
 	int ret;
 
-	ret = ftrace_set_filter_ip(&tcpsecrets_ftrace_ops, (unsigned long)cookie_v4_check_ptr, 0, 0);
+	ret = ftrace_set_filter_ip(
+		&tcpsecrets_ftrace_ops, (unsigned long)cookie_v4_check_ptr, 0, 0);
 	if (ret)
 		printk(LOG_PREFIX "can't set ftrace filter: err=%d\n", ret);
 
@@ -203,7 +207,7 @@ static void init_secrets(void)
 	__cookie_v4_init_sequence(&ip, &tcp, &mss);
 
 	/* net_secret */
-	secure_tcp_seq(0, 0, 0, 0);
+	secure_tcp_seq_ptr(0, 0, 0, 0);
 
 	/* IPv4 version is not exported, but uses the same ts_secret.
 	 * Addresses are passed as __be32*, but are used as IPv6.
@@ -233,6 +237,10 @@ static int __init tcp_secrets_init(void)
 		return -1;
 	}
 
+	if (!secure_tcp_seq_ptr) {
+		printk(LOG_PREFIX "can't find secure_tcp_seq()!\n");
+		return -1;
+	}
 	if (!syncookie_secret_ptr) {
 		printk(LOG_PREFIX "can't find syncookie secret!\n");
 		return -1;
@@ -290,4 +298,4 @@ MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Alexander Polyakov <apolyakov@beget.ru>");
 MODULE_AUTHOR("Dmitry Kozlyuk <kozlyuk@bifit.com>");
 MODULE_DESCRIPTION("Provide access to TCP SYN cookie secrets via /proc/" PROC_ENTRY);
-MODULE_VERSION("2.1");
+MODULE_VERSION("2.2");
