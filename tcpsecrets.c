@@ -74,7 +74,7 @@ static int tcp_secrets_open(struct inode *inode, struct file *file)
 	return single_open(file, tcp_secrets_show, NULL);
 }
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 4, 0)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 6, 0)
 static const struct file_operations tcp_secrets_fops = {
 	.open		= tcp_secrets_open,
 	.read		= seq_read,
@@ -298,4 +298,4 @@ MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Alexander Polyakov <apolyakov@beget.ru>");
 MODULE_AUTHOR("Dmitry Kozlyuk <kozlyuk@bifit.com>");
 MODULE_DESCRIPTION("Provide access to TCP SYN cookie secrets via /proc/" PROC_ENTRY);
-MODULE_VERSION("2.2");
+MODULE_VERSION("2.3");
