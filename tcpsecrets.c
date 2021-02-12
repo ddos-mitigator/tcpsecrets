@@ -56,6 +56,7 @@ static void show_bytes(struct seq_file *m, const char *name,
 static int tcp_secrets_show(struct seq_file *m, void *v)
 {
 	seq_printf(m, "time_sec %llu\n", ktime_get_real_seconds());
+	seq_printf(m, "time_ms %llu\n", ktime_get_real_ns() / NSEC_PER_MSEC);
 	seq_printf(m, "uptime_ms %u\n", tcp_time_stamp_raw());
 	seq_printf(m, "jiffies %llu\n", get_jiffies_64());
 
@@ -298,4 +299,4 @@ MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Alexander Polyakov <apolyakov@beget.ru>");
 MODULE_AUTHOR("Dmitry Kozlyuk <kozlyuk@bifit.com>");
 MODULE_DESCRIPTION("Provide access to TCP SYN cookie secrets via /proc/" PROC_ENTRY);
-MODULE_VERSION("2.3");
+MODULE_VERSION("2.4");
